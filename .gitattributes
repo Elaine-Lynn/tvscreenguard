@@ -1,0 +1,4 @@
+* text=auto
+*.bat text eol=crlf whitespace=cr-at-eol
+# Preserve inherited licence texts byte-for-byte, including their original spacing.
+licenses/*.txt -whitespace

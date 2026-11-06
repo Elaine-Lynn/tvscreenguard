@@ -1,0 +1,66 @@
+plugins { id 'com.android.application' }
+def releaseSecrets = new Properties()
+def signingPath = providers.gradleProperty('screenGuardSigningProperties')
+        .orElse(providers.environmentVariable('SCREENGUARD_SIGNING_PROPERTIES'))
+def signingFile = signingPath.isPresent() ? rootProject.file(signingPath.get()) : null
+if (signingFile != null && signingFile.exists()) {
+ signingFile.withInputStream { releaseSecrets.load(it) }
+}
+android {
+ namespace 'com.tv.screenguard'
+ compileSdk 34
+ buildFeatures { buildConfig true }
+ defaultConfig {
+  applicationId 'com.tv.screenguard'
+  minSdk 26
+  targetSdk 34
+  versionCode 15
+  versionName '1.0.14'
+  buildConfigField 'boolean', 'TIMER_TEST_OPTION', 'false'
+  testInstrumentationRunner 'com.tv.screenguard.GuardIntegration'
+ }
+ signingConfigs {
+  production {
+   if (!releaseSecrets.isEmpty()) {
+    storeFile new File(signingFile.parentFile, releaseSecrets.getProperty('storeFile'))
+    storePassword releaseSecrets.getProperty('storePassword')
+    keyAlias releaseSecrets.getProperty('keyAlias')
+    keyPassword releaseSecrets.getProperty('keyPassword')
+   }
+  }
+ }
+ buildTypes {
+  release {
+   signingConfig signingConfigs.production
+   // Keep QA-only timer resources out of the release APK.
+   minifyEnabled true
+   shrinkResources true
+   proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+  }
+  debug {
+   def qaTimer = project.findProperty('guardTimerTest') == 'true'
+   buildConfigField 'boolean', 'TIMER_TEST_OPTION', qaTimer.toString()
+   if (qaTimer) versionNameSuffix '-qa30'
+  }
+ }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies { testImplementation 'junit:junit:4.13.2' }
+
+// Verify the certificate before packaging; never fall back to a debug key.
+tasks.register('verifyReleaseCertificate') {
+ doLast {
+  if (releaseSecrets.isEmpty()) throw new GradleException('Provide private release signing configuration.')
+  def store = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType())
+  def keyFile = new File(signingFile.parentFile, releaseSecrets.getProperty('storeFile'))
+  keyFile.withInputStream { store.load(it, releaseSecrets.getProperty('storePassword').toCharArray()) }
+  def certificate = store.getCertificate(releaseSecrets.getProperty('keyAlias'))
+  def fingerprint = certificate == null ? '' : java.security.MessageDigest.getInstance('SHA-256').digest(certificate.encoded).encodeHex().toString()
+  if (fingerprint != '8d5b5378f9056880f3036d44bc2f4a48322141fbb8d8bc91951d61a4652d997f') {
+   throw new GradleException('Release certificate must match the approved GenTV certificate.')
+  }
+ }
+}
+tasks.configureEach {
+ if (name == 'validateSigningRelease') dependsOn('verifyReleaseCertificate')
+}
